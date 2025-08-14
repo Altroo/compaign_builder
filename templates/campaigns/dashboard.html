@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Campaign Dashboard</title>
+
+    <!-- jQuery (required for Semantic) -->
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+
+    <!-- Semantic UI CSS (CDN) -->
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.5.0/semantic.min.css">
+
+    <!-- Semantic UI JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.5.0/semantic.min.js"></script>
+    <style>
+        body { padding: 2rem; }
+        #message {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1000;
+            min-width: 250px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="ui container">
+    <h1 class="ui header">Campaigns</h1>
+    <!-- ------- LIST OF CAMPAIGNS -------- -->
+    <table class="ui celled table" id="campaign-table">
+        <thead>
+        <tr>
+            <th>Name</th>
+            <th>Schedule</th>
+            <th>Emails / Run</th>
+            <th>Recipients</th>
+            <th>Created</th>
+        </tr>
+        </thead>
+        <tbody>
+        <!-- populated via JS -->
+        </tbody>
+    </table>
+    <div class="ui divider"></div>
+    <!-- ------- NEW CAMPAIGN FORM -------- -->
+    <h2 class="ui header">Create New Campaign</h2>
+    <form class="ui form" id="create-campaign-form" method="post" action="javascript:void(0);">
+        {% csrf_token %}
+        <div class="fields">
+            <div class="field">
+                <label>Name</label>
+                <input type="text" name="name" placeholder="Campaign name" required>
+            </div>
+            <div class="field">
+                <label>Schedule Type</label>
+                <select name="schedule_type" class="ui dropdown" required>
+                    <option value="">Select…</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="fields">
+            <div class="field" id="daily-count-field" style="display:none;">
+                <label>Daily Emails</label>
+                <input type="number" name="daily_emails" min="1" value="2">
+            </div>
+            <div class="field" id="weekly-count-field" style="display:none;">
+                <label>Weekly Emails</label>
+                <input type="number" name="weekly_emails_input" min="1" value="5">
+            </div>
+            <div class="field" id="weekly-days-field" style="display:none;">
+                <label>Weekly Days (comma-separated 0-6)</label>
+                <input type="text" name="weekly_days" placeholder="e.g. 0,2,4">
+            </div>
+        </div>
+        <div class="field">
+            <label>Description (optional)</label>
+            <textarea name="description" placeholder="Brief description of the campaign…"></textarea>
+        </div>
+        <div class="field">
+            <label>Recipient e-mail(s) (comma-separated)</label>
+            <input type="text" name="recipient_emails" placeholder="user@example.com, other@ex.com" required>
+        </div>
+
+        <div class="field">
+            <label>Total Days</label>
+            <input type="number" name="total_days" placeholder="Leave blank for months">
+        </div>
+
+        <div class="field">
+            <label>Total Months</label>
+            <input type="number" name="total_months" placeholder="Leave blank for days">
+        </div>
+
+        <div class="field">
+            <label>AI Agent Model (optional)</label>
+            <input type="text" name="ai_agent_id" placeholder="openai/gpt-oss-20b:free">
+        </div>
+
+        <button class="ui primary button" type="submit">Create</button>
+    </form>
+</div>
+<div id="message" class="ui hidden message"></div>
+<script>
+    /* ---------------------------------------------------------------
+     * Helpers
+     * --------------------------------------------------------------- */
+    let hideMessageTimer = null;
+    let messageQueue = [];
+    let isShowingMessage = false;
+
+    const hideMessage = () => {
+        $("#message")
+            .addClass('hidden')
+            .removeClass('positive negative'); // reset style
+        isShowingMessage = false;
+
+        // Show next message in queue if any
+        if (messageQueue.length > 0) {
+            const nextMessage = messageQueue.shift();
+            showMessage(nextMessage.type, nextMessage.text, nextMessage.duration);
+        }
+    };
+
+    const showMessage = (type, text, duration = 5000) => {
+        // If a message is already showing, queue this one
+        if (isShowingMessage) {
+            messageQueue.push({ type, text, duration });
+            return;
+        }
+
+        isShowingMessage = true;
+
+        // Clear any existing timer
+        if (hideMessageTimer) {
+            clearTimeout(hideMessageTimer);
+            hideMessageTimer = null;
+        }
+
+        const $msg = $("#message");
+        $msg
+            .removeClass('hidden positive negative')
+            .addClass(type === 'error' ? 'negative' : 'positive')
+            .text(text)
+            .removeClass('hidden');
+
+        // Set timer to hide message after specified duration
+        hideMessageTimer = setTimeout(hideMessage, Math.max(duration, 5000)); // Ensure minimum 5 seconds
+    };
+
+    /* ---------------------------------------------------------------
+     * CSRF token helper
+     * --------------------------------------------------------------- */
+    function getCsrfToken() {
+        return document.querySelector('input[name="csrfmiddlewaretoken"]').value;
+    }
+
+    /* ---------------------------------------------------------------
+     * Load campaigns (handles plain list or DRF-paginated response)
+     * --------------------------------------------------------------- */
+    function loadCampaigns() {
+        $.ajax({
+            url: '/api/campaigns/',
+            method: 'GET',
+            dataType: 'json',
+            headers: { 'X-CSRFToken': getCsrfToken() },
+            success: function (data) {
+                const items = Array.isArray(data) ? data
+                    : (Array.isArray(data.results) ? data.results
+                    : (Array.isArray(data.campaigns) ? data.campaigns : []));
+
+                const $tbody = $("#campaign-table tbody").empty();
+                items.forEach(c => {
+                    const dailyOrWeekly = c.schedule_type === "daily"
+                        ? c.daily_emails ?? '-'
+                        : c.weekly_emails ?? '-';
+                    const row = `<tr>
+                        <td>${c.name ?? ''}</td>
+                        <td>${c.schedule_type ?? ''}</td>
+                        <td>${dailyOrWeekly}</td>
+                        <td>${(c.recipient_emails || []).join(", ")}</td>
+                        <td>${new Date(c.created_at).toLocaleString()}</td>
+                    </tr>`;
+                    $tbody.append(row);
+                });
+            },
+            error: function (xhr) {
+                console.error('Failed to load campaigns', xhr);
+                showMessage('error', 'Unable to load campaigns', 5000);
+            }
+        });
+    }
+
+    /* ---------------------------------------------------------------
+     * UI initialization (run on page load)
+     * --------------------------------------------------------------- */
+    $(document).ready(() => {
+        // ---- initial table load
+        loadCampaigns();
+
+        // ---- schedule-specific field visibility
+        const $scheduleSelect = $("select[name='schedule_type']");
+        const toggleFields = (type) => {
+            $("#daily-count-field, #weekly-count-field, #weekly-days-field")
+                .hide()
+                .find('input')
+                .val(''); // clear hidden fields
+
+            if (type === 'daily') {
+                $("#daily-count-field").show();
+            } else if (type === 'weekly') {
+                $("#weekly-count-field, #weekly-days-field").show();
+            }
+        };
+        // initial state (in case server pre-populates a value)
+        toggleFields($scheduleSelect.val());
+
+        $scheduleSelect.change(function () {
+            toggleFields($(this).val());
+        });
+
+        // -----------------------------------------------------------
+        // Create campaign via Ajax
+        // -----------------------------------------------------------
+        $("#create-campaign-form").submit(function (e) {
+            e.preventDefault();
+
+            // ---- build payload -------------------------------------------------
+            const formData = $(this).serializeArray();
+            const data = {};
+
+            formData.forEach(({ name, value }) => {
+                // numeric fields (only add if not empty)
+                if (['total_days', 'total_months'].includes(name)) {
+                    if (value.trim() !== '') {
+                        const intVal = parseInt(value, 10);
+                        if (!isNaN(intVal)) data[name] = intVal;
+                    }
+                    return;
+                }
+                data[name] = value;
+            });
+
+            // ---- schedule-specific handling --------------------------------
+            if (data.schedule_type === 'daily') {
+                const dailyVal = $("#daily-count-field input").val();
+                data.daily_emails = dailyVal ? parseInt(dailyVal, 10) : null;
+                delete data.weekly_emails;
+                delete data.weekly_days;
+            } else if (data.schedule_type === 'weekly') {
+                const weeklyVal = $("#weekly-count-field input").val();
+                data.weekly_emails = weeklyVal ? parseInt(weeklyVal, 10) : null;
+
+                const daysStr = $("#weekly-days-field input").val() || '';
+                data.weekly_days = daysStr
+                    .split(',')
+                    .map(s => s.trim())
+                    .filter(s => s !== '');
+
+                delete data.daily_emails;
+            } else {
+                delete data.daily_emails;
+                delete data.weekly_emails;
+                delete data.weekly_days;
+            }
+
+            // ---- recipients (array of strings) ---------------------------
+            if (data.recipient_emails) {
+                data.recipient_emails = data.recipient_emails
+                    .split(',')
+                    .map(s => s.trim())
+                    .filter(s => s !== '');
+            }
+
+            // ---- Ajax submit ---------------------------------------------
+            $.ajax({
+                url: '/api/campaigns/',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify(data),
+                headers: { 'X-CSRFToken': getCsrfToken() },
+                success: () => {
+                    showMessage('success', 'Campaign created successfully!', 5000);
+
+                    // reset form & hide conditional fields
+                    $("#create-campaign-form")[0].reset();
+                    toggleFields(''); // hide all schedule-specific fields
+
+                    // reload table
+                    loadCampaigns();
+                },
+                error: (xhr) => {
+                    const err = xhr.responseJSON || {};
+                    if (Object.keys(err).length) {
+                        // Combine all errors into a single message to avoid overwhelming the user
+                        const errorMessages = [];
+                        Object.entries(err).forEach(([key, val]) => {
+                            const msgs = Array.isArray(val) ? val : [val];
+                            msgs.forEach(msg => {
+                                errorMessages.push(`${key}: ${msg}`);
+                            });
+                        });
+                        showMessage('error', 'Validation errors: ' + errorMessages.join('; '), 7000);
+                    } else {
+                        showMessage('error', 'Error creating campaign: ' + (xhr.responseText || 'Unknown error'), 5000);
+                    }
+                }
+            });
+        });
+    });
+</script>
+</body>
+</html>

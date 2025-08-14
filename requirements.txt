@@ -1,0 +1,16 @@
+django-sendgrid-webhook
+python-decouple==3.8
+pytest==8.4.1
+pytest-django==4.11.1
+Django==5.2.5
+djangorestframework==3.16.1
+psycopg2-binary==2.9.10
+celery[redis]==5.5.3
+django-celery-beat==2.8.1
+openai==1.99.9
+gunicorn==23.0.0
+redis==6.4.0
+django-cors-headers==4.7.0
+pydantic==2.11.7
+pydantic-core==2.33.2
+sendgrid==6.12.4
